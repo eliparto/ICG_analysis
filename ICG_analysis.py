@@ -1,59 +1,15 @@
 """ Latest version of individual and ensemble avergage analysis """
-
 import numpy as np
 import pandas as pd
-from scipy.signal import butter, filtfilt, find_peaks
-from scipy.cluster.vq import vq, kmeans, whiten
-from matplotlib import pyplot as plt
 from typing import Callable
-from dataclasses import dataclass, field
-import warnings
 
-@dataclass
-class Ensemble: 
-    """
-    An ensemble (collection of features/signals) and related data.
-    """
-    features: np.ndarray = field(default_factory=lambda: np.array([])) # 2D
-    ensAvg: np.ndarray = field(default_factory=lambda: np.array([])) # 1D
-    sds: np.ndarray = field(default_factory=lambda: np.array([])) # 1D
-    label: str = ""
-    
-    gen_avg = staticmethod(lambda l: np.average(l, axis=0)
-                           if len(l) > 0 and l.ndim == 2 else np.array([]))
-    gen_sds = staticmethod(lambda l: np.std(l, axis=0)
-                           if len(l) > 0 and l.ndim == 2 else np.array([]))
-    
-    def __post_init__(self) -> None:
-        self.calc()
-    
-    def calc(self) -> None:
-        if len(self.features) > 0:
-            self.ensAvg = self.gen_avg(self.features)
-            self.sds = self.gen_sds(self.features)
+from DataFormats import Ensemble, Point, Line
+from ICGPlot import ICGPlot
         
 class ICG():
     def __init__(self) -> None:
-        # Plotting
-        self.shape_plot = [80,25]
-        self.titleSize = 50
-        self.txtSize = 30
-        self.colors = [
-            "#2ECC71",  # green
-            "#E67E22",  # orange
-            "#9B59B6",  # purple
-            "#1ABC9C",  # teal
-            "#E74C3C",  # red
-            "#F1C40F",  # yellow
-            "#E91E63",  # pink
-            "#FF5722",  # deep orange
-        ]
-        
-        # Signal data
         self.fs = 1000.0 # Sampling frequency
-        self.offsetL = 256
-        self.offsetR = 744
-    
+        
     # Data importing
     def importCSV(self, fileName: str) -> pd.DataFrame:
         """
@@ -72,7 +28,9 @@ class ICG():
         Generate an Ensemble object containing left over and discarded 
         features per individual complex boundary conditions.        
         """
+        ecg = np.array([])
         if isinstance(features, pd.DataFrame):
+            ecg = self.extractFeatures(features, ecg=True)
             features = self.extractFeatures(features)
         nMin = int (pMin * len(features))
         rem = []
@@ -89,7 +47,7 @@ class ICG():
                 fBounds = np.max(f_sub) - np.min(f_sub)
                 
                 # Anomalous bounds size found -> If error increases, store
-                if fBounds > rBounds*boundsMax or fBounds < rBounds*boundsMax:
+                if fBounds > rBounds*boundsMax or fBounds < rBounds*boundsMin:
                     if fBounds > rBounds: curError = fBounds / rBounds
                     else: curError = rBounds / fBounds
                     
@@ -103,126 +61,102 @@ class ICG():
             features = np.delete(features, idxRem, axis=0)
             
         return [
-            Ensemble(features=features, label="Kept signals"),
+            Ensemble(features=features, label="Kept signals", ecg=ecg),
             Ensemble(features=np.array(rem), label="Removed signals")
             ]
     
-    def extractFeatures(self, df: pd.DataFrame) -> np.ndarray:
+    def extractFeatures(
+            self, df: pd.DataFrame, ecg: bool = False
+            ) -> np.ndarray:
         """
         Extract the feature vectors out of a dataframe.
         """
         dataCols = [col for col in df.columns if col.startswith("s")]
-        features = df[dataCols].to_numpy()
+        if ecg: features = df[dataCols].to_numpy()[-1]
+        else: features = df[dataCols].to_numpy()[:-1] # ECG stored in last row
+        
         return features
     
-    # Plotting
-    def multiPlotLinesFn(
-            self, data: Ensemble, alpha: float = 0.15, lwMain: int = 6,
-            lw: int = 4, color: str = "skyblue", nSignals: int = 20, 
-            yrange: list[float] = None,
-            title: str = "", xlab: str = "", ylab: str = ""
-            ) -> Callable[[plt.Axes], None]:
-        """
-        Generate plotting func of signal(s) with lighter shaded ensemble.
-        """
-        assert nSignals <= len(data.features), "Not enough complexes to show."
-        idxs = np.random.choice(len(data.features), nSignals, replace=False)
-        x = np.arange(len(data.ensAvg))
-        
-        def plot_fn(ax: plt.Axes) -> None:
-            ax.plot(x, data.ensAvg, color=color, lw=lwMain)
-            
-            for f in data.features[idxs]:
-                ax.plot(x, f, color=color, lw=lw, alpha=alpha)
-                
-            ax.set_title(title, fontsize=self.txtSize)
-            ax.grid(which="both", axis="both")
-            ax.tick_params(axis="both", labelsize=self.txtSize)
-            ax.set_xlabel(xlab, fontsize=self.txtSize)
-            ax.set_ylabel(ylab, fontsize=self.txtSize)
-            ax.set_xlim(x[0], x[-1])
-            if yrange is not None: ax.set_ylim(yrange[0], yrange[1])
-            
-        return plot_fn
-            
-    def multiPlotShadeFn(
-            self, data: Ensemble | list[Ensemble], showSD: bool = True,  
-            alpha: float = 0.15, yrange: list[float] = None, lw: int = 4,
-            colors: list[str] = None, vline: int = -1, vlab: str = "", 
-            title: str = "", xlab: str = "", ylab: str = "", 
-            legend: bool = True
-            ) -> Callable[[plt.Axes], None]:
-        """
-        Generate plotting func of signal(s) with optional shaded SD.
-        """
-        if isinstance(data, Ensemble): data = [data]
-        if colors is None: colors = self.colors
-        wString = f"{len(colors)} supplied for {len(data)} signals"
-        assert len(colors) > len(data), wString
-        
-        def plot_fn(ax: plt.Axes) -> None:
-            for d, color in zip(data, colors[:len(data)]):
-                if len(d.ensAvg) > 0:
-                    x = np.arange(len(d.ensAvg))
-                    ax.plot(
-                        x, d.ensAvg, color=color, lw=lw, label=d.label
-                        )
-                    
-                if showSD:
-                    ax.fill_between(
-                        x, d.ensAvg-d.sds, d.ensAvg+d.sds, color=color, 
-                        alpha=alpha
-                        )
-                
-            if vline > 0:
-                ax.axvline(
-                    vline, color="red", lw=lw*2, linestyle=":", label=vlab
-                    )
-                
-            ax.set_title(title, fontsize=self.txtSize)
-            ax.grid(which="both", axis="both")
-            ax.tick_params(axis="both", labelsize=self.txtSize)
-            ax.set_xlabel(xlab, fontsize=self.txtSize)
-            ax.set_ylabel(ylab, fontsize=self.txtSize)
-            ax.set_xlim(x[0], x[-1])
-            if yrange is not None: ax.set_ylim(yrange[0], yrange[1])
-            if legend: ax.legend(fontsize=self.txtSize)
-            
-        return plot_fn
-    
-    def plotFigs(
-            self, plot_fn: Callable[[plt.Axes], None] | 
-            list[Callable[[plt.Axes], None]], 
-            figsize: tuple[int] = None, vert: bool = False, title: str = ""
+    # Runs
+    def runBounds(
+            self, data: pd.DataFrame, bounds: list[float], title: str = ""
             ) -> None:
         """
-        Generate plots using a (list of) plt.Axes object(s).
-        Currently only usable for 1xn or nx1 sized figures.
+        Run the bounding filter at different bound sizes.
         """
-        if not isinstance(plot_fn, list): plot_fn = [plot_fn]
-        if figsize is None: 
-            figsize = self.shape_plot
-            if vert: figsize[1] = figsize[1]*len(plot_fn)
+        fns1 = []
+        fns2 = []
+        fns3 = []
+        ensCompare = []
+        for b in bounds:
+            d = data.copy()
+            ens, rem = self.filterByBounds(features=d, boundsMax=b)
+            title=f"Bound size = {b} -> {rem.cnt}/{len(d)} complexes removed."
+            fn1 = self.multiPlotShadeFn(
+                data=[ens, rem], showSD=True, vline=255, vlab="R-peak",
+                title=title, xlab="t [ms]", ylab=r"$\frac{dZ}{dt}$ [Ω/s]"
+                )
+            fn2 = self.multiPlotShadeFn(
+                data=[ens, rem], showSD=True, vline=255, vlab="R-peak",
+                title=title, xlab="t [ms]", ylab=r"$\frac{dZ}{dt}$ [Ω/s]",
+                yrange=[-0.005, 0.014]
+                )
+            fns1.append(fn1)
+            fns2.append(fn2)
+            ensCompare.append(ens)
+         
+        # Plot ensemble averages with shaded SDs
+        figTitle="Kept/discarded signals at different bound sizes"
+        self.plotFigs(
+            plot_fn=fns1, title=figTitle, vert=True
+            )
+        self.plotFigs(
+            plot_fn=fns2, title=figTitle+" (static y-range)", vert=True
+            )
         
-        fig = plt.figure(figsize=figsize)
-        if vert: subfigs = fig.subfigures(len(plot_fn), 1)
-        else: subfigs = fig.subfigures(1, len(plot_fn))
-        if not isinstance(subfigs, np.ndarray): subfigs = [subfigs]
+        # Plot ensemble averages at different filtering bounds sizes
+        for ens, b in zip(ensCompare, bounds):
+            ens.label = str(b)
+        fns3.append(
+            self.multiPlotLinesFn(
+                data=ensCompare, xlab="t [ms]", ylab=r"$\frac{dZ}{dt}$ [Ω/s]",
+                title="Ensemble average at different bounds sizes"
+            )
+        )
         
-        for subfig, fn in zip(subfigs, plot_fn):
-            ax = subfig.subplots()
-            fn(ax)
-            
-        fig.suptitle(title, fontsize=self.titleSize)
-        fig.tight_layout()
-        plt.show()
+        # Zoom on on relevant area
+        fns3.append(
+            self.multiPlotLinesFn(
+                data=ensCompare, xlab="t [ms]", ylab=r"$\frac{dZ}{dt}$ [Ω/s]",
+                zoomRange=[255, 500],
+                title="Ensemble average at different bounds sizes (zoomed)"
+            )
+        )
+        
+        # Add small y deviation to pull signals apart
+        fns3.append(
+            self.multiPlotLinesFn(
+                data=ensCompare, xlab="t [ms]", ylab=r"$\frac{dZ}{dt}$ [Ω/s]",
+                zoomRange=[255, 500], dy = 0.0001,
+                title="Ensemble average at different bounds sizes (zoomed + y delta)"
+            )
+        )
+        
+        self.plotFigs(
+            plot_fn=fns3, vert=True, 
+            title="Ensemble average at different bound sizes"
+            )
     
-    # Runs
-    ...
-            
 icg = ICG()
-df = icg.importCSV("Data/baseline_climbing.csv")
-
+plt = ICGPlot()
+df = icg.importCSV("Data/baseline_climbing_wECG.csv")
+signalBounds = [1.0, 1.5, 2.0, 2.5, 3.0, 4.0]
+ens = Ensemble(
+    features=icg.extractFeatures(df),
+    ecg=icg.extractFeatures(df, ecg=True),
+    label="test"
+    )
+slope = 3e-5
 
 
 
