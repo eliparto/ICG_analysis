@@ -3,7 +3,7 @@ import numpy as np
 import pandas as pd
 from typing import Callable
 
-from DataFormats import Ensemble, Point, Line
+from DataFormats import Ensemble, Point, Line, FindPoints
 from ICGPlot import ICGPlot
         
 class ICG():
@@ -78,6 +78,21 @@ class ICG():
         return features
     
     # Runs
+    def runPoints(self, data: pd.DataFrame, title: str = "") -> None:
+        ens = Ensemble(
+            features=icg.extractFeatures(data), 
+            ecg=icg.extractFeatures(data, ecg=True)
+            )
+        ecg = Ensemble(ecg=icg.extractFeatures(data, ecg=True))
+        
+        # Find all relevant points
+        f.findPoints(ens)
+        ecg.r = ens.r
+        ecg.t = ens.t
+        
+        # Plot signal and points
+        ...
+    
     def runBounds(
             self, data: pd.DataFrame, bounds: list[float], title: str = ""
             ) -> None:
@@ -149,14 +164,18 @@ class ICG():
     
 icg = ICG()
 plt = ICGPlot()
+f = FindPoints()
+
 df = icg.importCSV("Data/baseline_climbing_wECG.csv")
 signalBounds = [1.0, 1.5, 2.0, 2.5, 3.0, 4.0]
 ens = Ensemble(
     features=icg.extractFeatures(df),
-    ecg=icg.extractFeatures(df, ecg=True),
-    label="test"
+    sigAlt=icg.extractFeatures(df, ecg=True),
+    label="test",
     )
 slope = 3e-5
+
+f.findPoints(ens)
 
 
 

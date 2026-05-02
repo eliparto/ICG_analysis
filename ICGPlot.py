@@ -19,6 +19,27 @@ class ICGPlot():
             "#E91E63",  # pink
             "#FF5722",  # deep orange
         ]
+        # pyplot marker types
+        self.markers = {
+            "lozano"    : "$L$",
+            "d2"        : "1",
+            "d3"        : "2",
+            "inflection": "x",
+            }
+        # pyplot marker colors
+        self.markerColors = {}
+        # Which markers to (not) show
+        self.ptConfig = {
+            "lozano":       True,
+            "inflection":   True,
+            "d2":           True,
+            "d3":           True,
+            "C":    True,
+            "C_1":  True,
+            "C_2":  True,
+            "T":    True,
+            "X":    False,
+            }
         
     # plotting functions
     def plotUnderlayFn(
@@ -30,13 +51,13 @@ class ICGPlot():
         """
         Plot a function with underlying lighter shaded functions.
         """
-        if colors is None: color = self.colors[0]
+        if color is None: color = self.colors[0]
         if nSignals > len(data.features): nSignals = len(data.features)
         sigIdxs = np.random.choice(len(data.features), nSignals, replace=False)
         
         def plot_fn(ax: plt.Axes) -> None:
-            x = np.arange(len(data.ensAvg))
-            ax.plot(x, data.ensAvg, color=color, lw=lwMain)
+            x = np.arange(len(data.sig))
+            ax.plot(x, data.sig, color=color, lw=lwMain)
             
             for sig in data.features[sigIdxs]:
                 ax.plot(x, sig, color=color, lw=lw, alpha=alpha)
@@ -59,8 +80,8 @@ class ICGPlot():
             
     def multiPlotFn(
             self, data: list[Ensemble], colors: list[str] = None, lw: int = 4,
-            dy: float = 0.0, vline: int = -1, vlab: str = "", 
-            title: str = "", xlab: str = "", ylab: str = "",
+            dy: float = 0.0, yrange: list[float] = None, vline: int = -1, 
+            vlab: str = "", title: str = "", xlab: str = "", ylab: str = "",
             legend: bool = True
             ) -> Callable[[plt.Axes], None]:
         """
@@ -71,8 +92,8 @@ class ICGPlot():
         def plot_fn(ax: plt.Axes) -> None:
             sum_dy = 0.0
             for d, color in zip(colors):
-                x = np.arange(len(d.ensAvg))
-                ax.plot(x, d.ensAvg+dy, color=color, lw=lw, label=d.label)
+                x = np.arange(len(d.sig))
+                ax.plot(x, d.sig+dy, color=color, lw=lw, label=d.label)
                 sum_dy += dy
             
             if vline > 0:
@@ -91,7 +112,50 @@ class ICGPlot():
             if legend: ax.legend(fontsize=self.fontsize)
             
         return plot_fn
+     
+    def plotPointsFn(
+            self, data: Ensemble, pointLabels: dict[str, bool] = None, 
+            color: str = "skyblue", lw: int = 4, ptSize: int = 50, 
+            yRange: list[float] = None, title: str = "", xlab: str = "", 
+            ylab: str = "", vline: int = -1, vlab: str = "", 
+            yrange: list[float] = None, legend: bool = True,
+            calcY: bool = False
+            ) -> Callable[[plt.Axes], None]:
+        """
+        Plot a function with points.
+        """
+        if color is None: color = self.colors[0]
+        if pointLabels is None: pointLabels = self.ptConfig
+        points = data.getPoints(pointLabels)
         
+        def plot_fn(ax: plt.Axes) -> None:
+            zorder=10
+            x = np.arange(len(data.sig))
+            ax.plot(x, data.sig, color=color, lw=lw, zorder=zorder)
+            
+            for pt in points:
+                zorder += 10
+                marker = "."
+                mColor = "black" # TODO: Implement color dict
+                if pt.label in self.markers.keys(): 
+                    marker = self.markers[pt.label]
+                ax.scatter(
+                    pt.x, pt.y, color=mColor, marker=marker, s=ptSize,
+                    label=pt.label, zorder=zorder
+                    )
+                    
+            ax.set_title(title, fontsize=self.fontsize)
+            ax.grid(which="both", axis="both")
+            ax.tick_params(axis="both", labelsize=self.fontsize)
+            ax.set_xlabel(xlab, fontsize=self.fontsize)
+            ax.set_ylabel(ylab, fontsize=self.fontsize)
+            ax.yaxis.get_offset_text().set_fontsize(self.fontsize)
+            ax.set_xlim(x[0], x[-1])
+            if yrange is not None: ax.set_ylim(yrange[0], yrange[1])
+            if legend: ax.legend(fontsize=self.fontsize)
+            
+        return plot_fn
+    
     def plotFn(
             self, data: Ensemble | list[Ensemble], alpha: float = 0.15, 
             lw: int = 4, colors: list[str] = None, yrange: list[float] = None, 
@@ -107,13 +171,13 @@ class ICGPlot():
     
         def plot_fn(ax: plt.Axes) -> None:
             for d, color in zip(data, colors):
-                x = np.arange(len(d.ensAvg))
-                ax.plot(x, d.ensAvg+dy, color=color, lw=lw, label=d.label)
+                x = np.arange(len(d.sig))
+                ax.plot(x, d.sig, color=color, lw=lw, label=d.label)
                 
                 if sd:
                     if len(d.sds) > 0:
                        ax.fill_between(
-                           x, d.ensAvg-d.sds, d.ensAvg+d.sds, color=color, 
+                           x, d.sig-d.sds, d.sig+d.sds, color=color, 
                            alpha=alpha
                            ) 
                 
@@ -157,7 +221,7 @@ class ICGPlot():
             ax = subfig.subplots()
             fn(ax)
             
-        fig.suptitle(title, fontsize=self.titleSize)
+        fig.suptitle(title, fontsize=self.titlesize)
         if tight: fig.tight_layout()
         plt.show()
         

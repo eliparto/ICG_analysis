@@ -1,5 +1,6 @@
 import numpy as np
 from dataclasses import dataclass, field
+from scipy.signal import butter, filtfilt
 
 @dataclass
 class Point:
@@ -8,6 +9,7 @@ class Point:
     """
     x: int = None
     y: float = None
+    label: str = ""
 
 @dataclass
 class Line:
@@ -42,14 +44,14 @@ class Line:
         return Point(x=x, y=y)
 
 @dataclass
-class Ensemble: 
+class Ensemble(): 
     """
     An ensemble (collection of features/signals) and related data.
     """
-    features: np.ndarray = field(default_factory=lambda: np.array([])) # 2D
-    ensAvg: np.ndarray = field(default_factory=lambda: np.array([])) # 1D
-    sds: np.ndarray = field(default_factory=lambda: np.array([])) # 1D
-    ecg: np.ndarray = field(default_factory=lambda: np.array([])) # 1D
+    features: np.ndarray = field(default_factory=lambda: np.array([]))
+    sig: np.ndarray = field(default_factory=lambda: np.array([])) # Main sig
+    sigAlt: np.ndarray = field(default_factory=lambda: np.array([])) # Alt sig
+    sds: np.ndarray = field(default_factory=lambda: np.array([])) 
     label: str = ""
     cnt: int = -1
     r: Point = None
@@ -57,9 +59,9 @@ class Ensemble:
     b: Point = None
     c: Point = None
     x: Point = None
-    bVals: dict = field(default_factory=lambda: {})
-    cVals: dict = field(default_factory=lambda: {})
-    xVals: dict = field(default_factory=lambda: {})
+    bPoints = []
+    cPoints = []
+    xPoints = []
     
     gen_avg = staticmethod(lambda l: np.average(l, axis=0)
                            if len(l) > 0 and l.ndim == 2 else np.array([]))
@@ -72,12 +74,61 @@ class Ensemble:
     def calc(self) -> None:
         self.cnt = len(self.features)
         if len(self.features) > 0:
-            self.ensAvg = self.gen_avg(self.features)
+            self.sig = self.gen_avg(self.features)
             self.sds = self.gen_sds(self.features)
+    
+    def setC(self, peak: int = 0) -> None:
+        """
+        Choose the C-point:
+        Specify the peak to place the C-point on (in case of multiple peaks).
+            peak: auto (0), first (1) or second (2) peak
+        """
+        assert 0 <= peak <= 2, f"Invalid peak val {peak} -> 0 <= peak <= 2"
+        self.c = self.cPoints[0]
+        if len(self.cPoints) == 2:
+            cPts = {pt.label: pt for pt in self.cPoints}
+            if cPts["C_2"].y > 1.4 * cPts["C_1"].y: self.c = cPts["C_2"]
+            if peak == 1: self.c = cPts["C_1"]
+            elif peak == 2: self.c = cPts["C_2"]
+    
+    def clearPoints(self) -> None:
+        self.r, self.t, self.b, self.c, self.x = None
+        self.bPoints = []    
+        self.cPoints = []
+        self.xPoints = []
+        
+    def recalcPoints(self) -> None:
+        """
+        Recalculate y values based on present internal signal for all points.
+        """
+        allPoints = self.bPoints + self.cPoints + [self.r] + [self.t]
+        for pt in allPoints: pt.y = self.sig[pt.x]
+    
+    def getPoints(self, toShow: dict[str, bool] = None) -> dict[str, Point]:
+        # Export requested points
+        allPoints = self.bPoints + self.cPoints + [self.r] + [self.t]
+        if toShow is None: return allPoints # Return all points
+        
+        labels = [
+            keyVal[0] for keyVal in list(toShow.items()) if keyVal[1] is True
+            ]
+        return [pt for pt in allPoints if pt.label in labels]
             
 class FindPoints():
     def __init__(self) -> None:
-        ...
+        self.dt = 5 # Search bound delta to eg not include min/max at bounds
+    
+    def findPoints(self, signal: Ensemble) -> None:
+        """
+        Run points detection in the correct order.
+        """
+        self.findR(signal)
+        self.findC(signal)
+        self.findT(signal)
+        # self.findX(signal)
+        self.findB_lozano(signal)
+        self.findB_inflection(signal)
+        self.findB_derivs(signal)
     
     def findB_lozano(self, signal: Ensemble) -> Ensemble:
         """
@@ -85,83 +136,151 @@ class FindPoints():
         spanning from R-peak projection to C point by looking for the same 
         slope on the curve.
         """
-        def calcDist(pLine: Point, pDZ: Point, slope: float) -> float:
+        def calcDist(ptLine: Point, ptDZ: Point, slope: float) -> float:
             """
             Calculate the length of the perpendicular line between two points.
             pLine: point on the line from the R-peak projection to C point
             pDZ: point on DZDT
             """
-            line_RC = Line(a=slope, pt=pLine)
-            line_norm = Line(a=-slope, pt=pDZ)
-            pI = line_RC.calcIntersection(line_norm) # Intersection
+            line_RC = Line(a=slope, pt=ptLine)
+            line_norm = Line(a=(1/slope), pt=ptDZ) # Normal vect through point
+            ptI = line_RC.calcIntersection(line_norm) # Intersection point
             
-            return np.sqrt((pI.x - pLine.x)**2 + (pI.y - pLine.y)**2)
-            
-        # Find the slope of the projection of t_R on DZDT to C
-        dtSlope = signal.c - signal.r
-        dzSlope = signal.ensAvg[signal.c] - signal.ensAvg[signal.r]
-        slope = dzSlope / dtSlope
+            return np.sqrt((ptI.x - ptLine.x)**2 + (ptI.y - ptLine.y)**2)
         
-        dAavg = np.gradient(signal.ensAvg)
+        # Find the points on DZDT with equal slopes to the line RC and dists
+        slope = (signal.c.y - signal.r.y) / (signal.c.x - signal.r.x)
+        tPts = self.findEqualSlopes(signal.sig, slope, signal.r.x, signal.c.x) 
+        allPts = [Point(x=t, y=signal.sig[t], label="lozano") for t in tPts]
         
+        if len(tPts) == 1: signal.bPoints.append(allPts[0])
+        else: # > 1 point found -> Take point with largest perpendicular dist
+            dists = np.array([calcDist(signal.r, pt, slope) for pt in allPts])
+            signal.bPoints.append(allPts[np.argmax(dists)])
     
     def findB_derivs(self, signal: Ensemble) -> None:
         """
         Find the B-points corresponding to the peaks of the third and fourth
         derivatives of Z0.
         """
-        ...
+        d2Sig = self.filtButterLow(self.nDiff(signal.sig, n=2), f=2)
+        d3Sig = np.gradient(d2Sig)
         
-    def findB_inflecion(self, signal: Ensemble) -> None:
+        # Use search bounding to be safetStart = signal.r
+        tStart = signal.r.x + self.dt
+        tStop = signal.c.x - self.dt
+        t_d2 = np.argmax(d2Sig[tStart:tStop]) + tStart
+        t_d3 = np.argmax(d3Sig[tStart:tStop]) + tStart
+        
+        signal.bPoints.append(Point(x=t_d2, y=signal.sig[t_d2], label="d2"))
+        signal.bPoints.append(Point(x=t_d3, y=signal.sig[t_d3], label="d3"))
+        
+    def findB_inflection(self, signal: Ensemble) -> None:
         """
         Find the B-point by looking for the inflection point of the upward slope.
         """
-        ...
-    
-    def findT(self, signal: Ensemble) -> None:
-        """
-        Find the ECG T-point by looking for the first peak after
-        the (last) C-point.
-        """
-        tStart = next(reversed(signal.cVals.values())).t
-        sig = np.copy(signal.ensAvg)[tStart]
-        dSig = np.gradient(sig)
+        tStart = signal.r.x + self.dt
+        tStop = signal.c.x - self.dt
+        d2Sig = self.nDiff(signal.sig, 2)
+        d2Sig = self.filtButterLow(d2Sig, f=40)
+        t = np.where(
+            np.diff(np.sign(d2Sig[tStart:tStop])) < 0
+            )[0][0] + tStart
         
-        # Find the first peak (zero crossing)
-        t = np.where(np.diff(np.sign(dSig)))[0][0] + tStart
-        signal.t = Point(x=t, y=signal.ensAvg[t])
+        signal.bPoints.append(
+            Point(x=t, y=signal.sig[t], label="inflection")
+            )
     
     def findC(
-            self, signal: Ensemble, tStart: int = 255, duration: int = 200
+            self, signal: Ensemble, duration: int = 250
             ) -> None:
         """
         Find the C-point(s) of an ensemble average signal.
         Finds the zero-crossings of the relevant subset of the data.
         """
-        sig = np.copy(signal.ensAvg)[tStart:tStart+duration]
+        # Find the zero scrossing(s)
+        tStart = signal.r.x + self.dt
+        dSig = np.gradient(signal.sig)[tStart:tStart+duration]
+        pts = np.where(np.diff(np.sign(dSig)) < 0)[0] + tStart
+        signal.cPoints.append(
+            Point(x=pts[0], y=signal.sig[pts[0]], label="C")
+            )
+        
+        if len(pts) > 1:
+            signal.cPoints[0].label = "C_1"
+            signal.cPoints.append(
+                Point(x=pts[1], y=signal.sig[pts[1]], label="C_2")
+                )
+            
+        signal.setC()
+    
+    def findR(self, signal: Ensemble, t: int = 255) -> None:
+        """
+        Set the R-point.
+        """
+        signal.r = Point(x=t, y=signal.sig[t], label="R")
+    
+    def findT(self, signal: Ensemble, duration: int = 100) -> None:
+        """
+        Find the ECG T-point by looking for the first peak after
+        the (last) C-point.
+        """
+        tStart = signal.c.x + self.dt
+        sig = np.copy(signal.sigAlt)[tStart:tStart+duration]
         dSig = np.gradient(sig)
         
-        # Find the zero scrossing(s) -> Choose second peak if 1.4x greater
-        pts = np.where(np.diff(np.sign(dSig)))[0] + tStart
-        cVals = {}
-        cVals["pk1"] = Point(
-            x=pts[0], y=signal.ensAvg[pts[0]]
-            )
-        signal.c = cVals["pk1"]
-        if (len(pts) >= 3): 
-            cVals["pk2"] = Point(
-                x=pts[2], y=signal.ensAvg[pts[2]]
-                )
-            if cVals["pk2"].z > cVals["pk1"].z * 1.4: signal.c = cVals["pk2"]
-            
-        signal.cVals = cVals
+        # Find the first peak after the C point(s)
+        t = np.argmax(dSig) + tStart
+        signal.t = Point(x=t, y=signal.sig[t], label="T")
+        
+    def findX(self, signal: Ensemble) -> None:
+        """
+        Find the X-point by looking for the minima after the T-point.
+        TODO: Implement
+        """
+        ...
 
-    def findEqualSlopes(self, slope: float, sig: np.ndarray) -> list[int]:
+    # Helper functions
+    def nDiff(self, sig: np.ndarray, n: int) -> np.ndarray:
+        """
+        Perform n differentiation steps.
+        """
+        for _ in range(n): sig = np.gradient(sig)
+        return sig
+    
+    def findEqualSlopes(
+            self, sig: np.ndarray, slope: float, tStart: int, tStop: int
+            ) -> list[int]:
         """
         Find time-point(s) in DZ with similar slope as the reference slope:
         Look for minima in |d(sig)/dt - slope|
         """
-        d_diff = np.abs(np.gradient(sig) - slope)
+        dSig = np.gradient(sig)[tStart:tStop]
+        return np.where(np.diff(np.sign(dSig-slope)) > 0)[0] + tStart
+    
+    def filtButterLow(
+            self, sig: np.ndarray, f: float = 0.5, order: int = 4, 
+            fs: float = 1000
+            ) -> np.ndarray:
+        """
+        Apply a butterworth low-pass filter to a signal.
+        """
+        nyq = fs / 2
+        b, a = butter(order, f/nyq, btype="low")
+        return filtfilt(b, a, sig)
+    
+    def filtButterBand(
+            self, sig: np.ndarray, fLow: float = 40, fHigh: float = 25,
+            order: int = 4, fs: float = 1000
+            ) -> np.ndarray:
+        """
+        Apply a butterworth band-pass filter to a signal.
+        """
+        nyq = fs / 2
+        b, a = butter(order, [fLow/nyq, fHigh/nyq], btype="band")
+        return filtfilt(b, a, sig)
+    
+f = FindPoints()
         
         
         
