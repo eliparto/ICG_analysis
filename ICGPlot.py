@@ -2,13 +2,13 @@ import numpy as np
 from matplotlib import pyplot as plt
 from typing import Callable
 
-from DataFormats import Ensemble
+from DataFormats import Ensemble, Point
 
 class ICGPlot():
     def __init__(self) -> None:
         self.figsize = (80,20)
-        self.fontsize = 50
-        self.titlesize = 30
+        self.fontsize = 40
+        self.titlesize = 60
         self.colors = [
             "#2ECC71",  # green
             "#E67E22",  # orange
@@ -19,29 +19,57 @@ class ICGPlot():
             "#E91E63",  # pink
             "#FF5722",  # deep orange
         ]
-        # pyplot marker types
-        self.markers = {
-            "lozano"    : "$L$",
-            "d2"        : "1",
-            "d3"        : "2",
-            "inflection": "x",
-            }
-        # pyplot marker colors
-        self.markerColors = {}
-        # Which markers to (not) show
-        self.ptConfig = {
-            "lozano":       True,
-            "inflection":   True,
-            "d2":           True,
-            "d3":           True,
-            "C":    True,
-            "C_1":  True,
-            "C_2":  True,
-            "T":    True,
-            "X":    False,
-            }
         
-    # plotting functions
+        # Marker info/properties
+        self.markers = {
+            "lozano":       {
+                                "lbl":     "Lozano",
+                                "posRight": False,
+                                "show":     True
+                },
+            "inflection":   {
+                                "lbl":     "Inflect",
+                                "posRight": False,
+                                "show":     True
+                },
+            "d2":           {
+                                "lbl":     r"$d^3$",
+                                "posRight": True,
+                                "show":     True
+                },
+            "d3":           {
+                                "lbl":     r"$d^4$",
+                                "posRight": True,
+                                "show":     True
+                },
+            "c":            {
+                                "lbl":      "C",
+                                "posTop":   True,
+                                "show":     True
+                },
+            "c_1":          {
+                                "lbl":      r"$C_1$",
+                                "posTop":   True,
+                                "show":     True
+                },
+            "c_2":          {
+                                "lbl":      r"$C_2$",
+                                "posRight": False,
+                                "show":     True
+                },
+            "t":            {
+                                "lbl":      "T",
+                                "posTop":   True,
+                                "show":     True
+                },
+            "r":            {
+                                "lbl":      "R",
+                                "posTop":   False,
+                                "show":     True
+                },
+            }
+     
+    # Plotting functions
     def plotUnderlayFn(
             self, data: Ensemble, nSignals: int, alpha: float = 0.15, 
             lwMain: int = 6, lw: int = 4, color: str = "darkblue", 
@@ -112,38 +140,43 @@ class ICGPlot():
             if legend: ax.legend(fontsize=self.fontsize)
             
         return plot_fn
-     
-    def plotPointsFn(
-            self, data: Ensemble, pointLabels: dict[str, bool] = None, 
-            color: str = "skyblue", lw: int = 4, ptSize: int = 50, 
-            yRange: list[float] = None, title: str = "", xlab: str = "", 
-            ylab: str = "", vline: int = -1, vlab: str = "", 
-            yrange: list[float] = None, legend: bool = True,
-            calcY: bool = False
+    
+    def dzdtFn(
+            self, data: Ensemble, pointLabels: dict[str, bool] = None,
+            showC: bool = True, showAllC: bool = True, 
+            color: str = "dodgerblue", mColor: str = "darkgray", 
+            shadeColor: str = "skyblue", lw: int = 4, ptSize: int = 750, 
+            shadeRange: list[int] = None, yrange: list[float] = None, 
+            title: str = "", xlab: str = "", ylab: str = "", 
+            legend: bool = False
             ) -> Callable[[plt.Axes], None]:
         """
-        Plot a function with points.
+        Standard plotting fn for DZDT plot with relevant markera.
         """
-        if color is None: color = self.colors[0]
-        if pointLabels is None: pointLabels = self.ptConfig
-        points = data.getPoints(pointLabels)
+        x = np.arange(len(data.sig))
         
-        def plot_fn(ax: plt.Axes) -> None:
-            zorder=10
-            x = np.arange(len(data.sig))
+        def plotFn(ax: plt.Axes) -> None:
+            zorder = 10
             ax.plot(x, data.sig, color=color, lw=lw, zorder=zorder)
             
-            for pt in points:
+            # Plot B points
+            for pt in data.getBPoints():
                 zorder += 10
-                marker = "."
-                mColor = "black" # TODO: Implement color dict
-                if pt.label in self.markers.keys(): 
-                    marker = self.markers[pt.label]
-                ax.scatter(
-                    pt.x, pt.y, color=mColor, marker=marker, s=ptSize,
-                    label=pt.label, zorder=zorder
-                    )
-                    
+                self.draw_point_horizontal(ax=ax, pt=pt, zorder=zorder)
+            
+            # Plot C points
+            if showC:
+                if showAllC:
+                    for pt in data.getCPoints():
+                        zorder += 10
+                        self.draw_point_vertical(ax=ax, pt=pt, zorder=zorder)
+                else: 
+                    zorder += 10
+                    self.draw_point_vertical(ax=ax, pt=pt.c, zorder=zorder)
+                
+            zorder += 10
+            self.draw_point_vertical(ax=ax, pt=data.r, zorder=zorder)
+            
             ax.set_title(title, fontsize=self.fontsize)
             ax.grid(which="both", axis="both")
             ax.tick_params(axis="both", labelsize=self.fontsize)
@@ -154,7 +187,8 @@ class ICGPlot():
             if yrange is not None: ax.set_ylim(yrange[0], yrange[1])
             if legend: ax.legend(fontsize=self.fontsize)
             
-        return plot_fn
+        return plotFn
+            
     
     def plotFn(
             self, data: Ensemble | list[Ensemble], alpha: float = 0.15, 
@@ -164,7 +198,7 @@ class ICGPlot():
             legend: bool = True
             ) -> Callable[[plt.Axes], None]:
         """
-        Plot a function a(and its SD).
+        Plot a function (and its SD).
         """
         if isinstance(data, Ensemble): data = [data]
         if colors is not None or len(colors) < len(data): colors = self.colors
@@ -198,6 +232,7 @@ class ICGPlot():
             
         return plot_fn
 
+    # Set up a 'canvas' and pass the plotting funcs of plots to show
     def plotFigs(
             self, plot_fn: Callable[[plt.Axes], None] | 
             list[Callable[[plt.Axes], None]], tight: bool = False,
@@ -224,7 +259,8 @@ class ICGPlot():
         fig.suptitle(title, fontsize=self.titlesize)
         if tight: fig.tight_layout()
         plt.show()
-        
+    
+    # For quick plotting
     def quickPlot(
             self, data: np.ndarray | list[np.ndarray], vert: bool = False,
             figsize: tuple[int] = None, color: str = "darkblue", lw: int = 4,
@@ -256,4 +292,47 @@ class ICGPlot():
             ax.yaxis.get_offset_text().set_fontsize(self.fontsize)
             ax.set_xlim(x[0], x[-1])
             
-    
+    # Marker plotting helpers/wrappers
+    def draw_point_vertical(
+            self, ax: plt.Axes, pt: Point, zorder: int, color: str = 'black', 
+            offset_pts: float = 0.0002
+            ) -> None:
+        label = self.markers[pt.label]["lbl"]
+        above = self.markers[pt.label]["posTop"]
+        sign = 1 if above else -1
+        ax.annotate(
+            label,
+            xy=(pt.x, pt.y),
+            xytext=(0, sign * offset_pts),
+            textcoords='offset points',
+            fontsize=7,
+            fontweight='bold',
+            ha='center',
+            va='center',
+            color=color,
+            arrowprops=dict(arrowstyle='-', color=color, lw=0.8),
+            zorder=zorder
+        )
+
+    def draw_point_horizontal(
+            self, ax: plt.Axes, pt: Point, zorder: int, color: str = 'black', 
+            offset_pts: int = 50
+            ) -> None:
+        label = self.markers[pt.label]["lbl"]
+        right = self.markers[pt.label]["posRight"]
+        sign = 1 if right else -1
+        ha = 'left' if right else 'right'
+        ax.annotate(
+            label,
+            xy=(pt.x, pt.y),
+            xytext=(sign * offset_pts, 0),
+            textcoords='offset points',
+            fontsize=7,
+            ha=ha,
+            va='center',
+            color=color,
+            arrowprops=dict(arrowstyle='->', color=color, lw=0.8),
+            zorder=zorder
+        )
+            
+plot = ICGPlot()  

@@ -163,7 +163,7 @@ class ICG():
             )
     
 icg = ICG()
-plt = ICGPlot()
+plot = ICGPlot()
 f = FindPoints()
 
 df = icg.importCSV("Data/baseline_climbing_wECG.csv")
@@ -176,7 +176,6 @@ ens = Ensemble(
 slope = 3e-5
 
 f.findPoints(ens)
-
 
 
 

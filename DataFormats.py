@@ -10,6 +10,9 @@ class Point:
     x: int = None
     y: float = None
     label: str = ""
+    
+    def getCopy(self) -> "Point":
+        return Point(self.x, self.y, self.label)
 
 @dataclass
 class Line:
@@ -58,10 +61,8 @@ class Ensemble():
     t: Point = None
     b: Point = None
     c: Point = None
-    x: Point = None
-    bPoints = []
-    cPoints = []
-    xPoints = []
+    bPoints: dict[str, Point] = field(default_factory=lambda: {})
+    cPoints: dict[str, Point] = field(default_factory=lambda: {})
     
     gen_avg = staticmethod(lambda l: np.average(l, axis=0)
                            if len(l) > 0 and l.ndim == 2 else np.array([]))
@@ -84,35 +85,34 @@ class Ensemble():
             peak: auto (0), first (1) or second (2) peak
         """
         assert 0 <= peak <= 2, f"Invalid peak val {peak} -> 0 <= peak <= 2"
-        self.c = self.cPoints[0]
-        if len(self.cPoints) == 2:
-            cPts = {pt.label: pt for pt in self.cPoints}
-            if cPts["C_2"].y > 1.4 * cPts["C_1"].y: self.c = cPts["C_2"]
-            if peak == 1: self.c = cPts["C_1"]
-            elif peak == 2: self.c = cPts["C_2"]
+        cPoints = dict(self.cPoints)
+        self.c = cPoints["c_1"].getCopy()
+        if peak == 2: self.c = cPoints["c_2"]
+        elif peak == 0 and cPoints["c_2"].y > 1.4*cPoints["c_1"].y:
+            self.c = cPoints["c_2"].getCopy()
+        self.c.label = "c"
     
     def clearPoints(self) -> None:
         self.r, self.t, self.b, self.c, self.x = None
-        self.bPoints = []    
-        self.cPoints = []
-        self.xPoints = []
+        self.bPoints = {}    
+        self.cPoints = {}
+        self.xPoints = {}
         
     def recalcPoints(self) -> None:
         """
         Recalculate y values based on present internal signal for all points.
         """
-        allPoints = self.bPoints + self.cPoints + [self.r] + [self.t]
-        for pt in allPoints: pt.y = self.sig[pt.x]
-    
-    def getPoints(self, toShow: dict[str, bool] = None) -> dict[str, Point]:
-        # Export requested points
-        allPoints = self.bPoints + self.cPoints + [self.r] + [self.t]
-        if toShow is None: return allPoints # Return all points
+        for pt in self.bPoints.values(): pt.y = self.sig[pt.x]
+        for pt in self.cPoints.values(): pt.y = self.sig[pt.x]
         
-        labels = [
-            keyVal[0] for keyVal in list(toShow.items()) if keyVal[1] is True
-            ]
-        return [pt for pt in allPoints if pt.label in labels]
+    def getBPoints(self) -> list[Point]:
+        return list(self.bPoints.values())
+        
+    def getCPoints(self) -> list[Point]:
+        return list(self.cPoints.values())
+    
+    def getAllPoints(self) -> list[Point]:
+        return self.getBPoints() + self.getCPoints()
             
 class FindPoints():
     def __init__(self) -> None:
@@ -153,27 +153,28 @@ class FindPoints():
         tPts = self.findEqualSlopes(signal.sig, slope, signal.r.x, signal.c.x) 
         allPts = [Point(x=t, y=signal.sig[t], label="lozano") for t in tPts]
         
-        if len(tPts) == 1: signal.bPoints.append(allPts[0])
+        if len(tPts) == 1: signal.bPoints["lozano"] = allPts[0]
         else: # > 1 point found -> Take point with largest perpendicular dist
             dists = np.array([calcDist(signal.r, pt, slope) for pt in allPts])
-            signal.bPoints.append(allPts[np.argmax(dists)])
+            signal.bPoints["lozano"] = allPts[np.argmax(dists)]
     
     def findB_derivs(self, signal: Ensemble) -> None:
         """
         Find the B-points corresponding to the peaks of the third and fourth
         derivatives of Z0.
         """
-        d2Sig = self.filtButterLow(self.nDiff(signal.sig, n=2), f=2)
+        # d* -> * denotes order of differentiation
+        d2Sig = self.filtButterLow(self.nDiff(signal.sig, n=2), f=40)
         d3Sig = np.gradient(d2Sig)
+        d4Sig = np.gradient(d3Sig)
         
-        # Use search bounding to be safetStart = signal.r
+        # Use search bounding to be safe
         tStart = signal.r.x + self.dt
-        tStop = signal.c.x - self.dt
-        t_d2 = np.argmax(d2Sig[tStart:tStop]) + tStart
-        t_d3 = np.argmax(d3Sig[tStart:tStop]) + tStart
+        t_d2 = np.where(np.diff(np.sign(d3Sig[tStart:])) < -1)[0][0] + tStart
+        t_d3 = np.where(np.diff(np.sign(d4Sig[tStart:])) < -1)[0][0] + tStart
         
-        signal.bPoints.append(Point(x=t_d2, y=signal.sig[t_d2], label="d2"))
-        signal.bPoints.append(Point(x=t_d3, y=signal.sig[t_d3], label="d3"))
+        signal.bPoints["d2"] = Point(x=t_d2, y=signal.sig[t_d2], label="d2")
+        signal.bPoints["d3"] = Point(x=t_d3, y=signal.sig[t_d3], label="d3")
         
     def findB_inflection(self, signal: Ensemble) -> None:
         """
@@ -187,10 +188,10 @@ class FindPoints():
             np.diff(np.sign(d2Sig[tStart:tStop])) < 0
             )[0][0] + tStart
         
-        signal.bPoints.append(
-            Point(x=t, y=signal.sig[t], label="inflection")
+        signal.bPoints["inflection"] = Point(
+            x=t, y=signal.sig[t], label="inflection"
             )
-    
+        
     def findC(
             self, signal: Ensemble, duration: int = 250
             ) -> None:
@@ -202,14 +203,13 @@ class FindPoints():
         tStart = signal.r.x + self.dt
         dSig = np.gradient(signal.sig)[tStart:tStart+duration]
         pts = np.where(np.diff(np.sign(dSig)) < 0)[0] + tStart
-        signal.cPoints.append(
-            Point(x=pts[0], y=signal.sig[pts[0]], label="C")
+        signal.cPoints["c_1"] = Point(
+            x=pts[0], y=signal.sig[pts[0]], label="c_1"
             )
         
         if len(pts) > 1:
-            signal.cPoints[0].label = "C_1"
-            signal.cPoints.append(
-                Point(x=pts[1], y=signal.sig[pts[1]], label="C_2")
+            signal.cPoints["c_2"] = Point(
+                x=pts[1], y=signal.sig[pts[1]], label="c_2"
                 )
             
         signal.setC()
@@ -218,7 +218,7 @@ class FindPoints():
         """
         Set the R-point.
         """
-        signal.r = Point(x=t, y=signal.sig[t], label="R")
+        signal.r = Point(x=t, y=signal.sig[t], label="r")
     
     def findT(self, signal: Ensemble, duration: int = 100) -> None:
         """
@@ -231,7 +231,7 @@ class FindPoints():
         
         # Find the first peak after the C point(s)
         t = np.argmax(dSig) + tStart
-        signal.t = Point(x=t, y=signal.sig[t], label="T")
+        signal.t = Point(x=t, y=signal.sig[t], label="t")
         
     def findX(self, signal: Ensemble) -> None:
         """
@@ -284,14 +284,4 @@ f = FindPoints()
         
         
         
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
+    
