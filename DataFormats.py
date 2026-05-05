@@ -59,8 +59,10 @@ class Ensemble():
     cnt: int = -1
     r: Point | None =  None
     t: Point | None = None
-    b: Point | None= None
-    c: Point | None= None
+    b: Point | None = None
+    c: Point | None = None
+    q: Point | None = None
+    qOnset: Point | None = None
     bPoints: dict[str, Point] = field(default_factory=lambda: {})
     cPoints: dict[str, Point] = field(default_factory=lambda: {})
     time: np.timedelta64 | str | None = None
@@ -192,7 +194,7 @@ class FindPoints():
         d2Sig = self.filtButterLow(d2Sig, f=40)
         t = np.where(
             np.diff(np.sign(d2Sig[tStart:tStop])) < 0
-            )[0][0] + tStart
+            )[0][-1] + tStart
         
         signal.bPoints["inflection"] = Point(
             x=t, y=signal.sig[t], label="inflection"
@@ -231,6 +233,7 @@ class FindPoints():
         Find the ECG T-point by looking for the first peak after
         the (last) C-point.
         """
+        assert len(signal.sigAlt) > 0, "No signal present for T-point calc."
         tStart = signal.c.x + self.dt
         sig = np.copy(signal.sigAlt)[tStart:tStart+duration]
         dSig = np.gradient(sig)

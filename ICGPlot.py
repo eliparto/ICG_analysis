@@ -152,7 +152,7 @@ class ICGPlot():
         Plot a function (and its SD).
         """
         if isinstance(data, Ensemble): data = [data]
-        if colors is not None or len(colors) < len(data): colors = self.colors
+        if colors is None or len(colors) < len(data): colors = self.colors
     
         def plot_fn(ax: plt.Axes) -> None:
             for d, color in zip(data, colors):
@@ -179,7 +179,7 @@ class ICGPlot():
             ax.yaxis.get_offset_text().set_fontsize(self.fontsize)
             ax.set_xlim(x[0], x[-1])
             if yrange is not None: ax.set_ylim(yrange[0], yrange[1])
-            if legend: ax.legend(fontsize=self.fontsize)
+            if legend and len(data) > 1: ax.legend(fontsize=self.fontsize)
             
         return plot_fn
 
@@ -196,7 +196,7 @@ class ICGPlot():
         if not isinstance(plot_fn, list): plot_fn = [plot_fn]
         if figsize is None: 
             figsize = self.figsize
-            if vert: figsize = (figsize[0]*len(plot_fn), figsize[1])
+            if vert: figsize = (figsize[1]*len(plot_fn), figsize[0])
         
         fig = plt.figure(figsize=figsize)
         if vert: subfigs = fig.subfigures(len(plot_fn), 1)
@@ -282,6 +282,7 @@ class ICGPlot():
             xytext=offsets[pos],
             textcoords='offset points',
             fontsize=self.fontsize,
+            fontstyle="italic",
             fontweight='normal',
             ha=ha_map[pos],
             va=va_map[pos],

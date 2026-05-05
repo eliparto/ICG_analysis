@@ -20,14 +20,31 @@ class ICG():
     
     # Filtering/ensembling
     def subsample(
-            self, features: pd.DataFrame() | np.ndarray, size: int = 5,
+            self, features: pd.DataFrame(), size: int = 5,
             bootstrap: bool = True
             ) -> list[Ensemble]:
         """
         Create subsample ensembles from the data with or without bootstrapping.
+        TODO: Currently uses the exported ECG ens avg for eg T-point calc.
         """
+        features = self.extractFeatures(df)
+        ecg = self.extractFeatures(df, ecg=True)
         
+        if bootstrap: 
+            subFeatures = [
+                np.array(features[i:i+size]) for i in range(len(features)-size)
+                ]
+        else: 
+            subFeatures = [
+                np.array(
+                    features[i:i+size]
+                    ) for i in range(0, len(features), size)
+                ]
+            
+        ensembles = [Ensemble(features=f, sigAlt=ecg) for f in subFeatures]
+        #for ens in ensembles: f.findPoints(ens)
         
+        return ensembles
     
     def filterByBounds(
             self, features: pd.DataFrame | np.ndarray, boundsMax: float = 1.75,
