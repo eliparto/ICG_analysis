@@ -7,8 +7,8 @@ class Point:
     """
     Simple point holding a time and value.
     """
-    x: int = None
-    y: float = None
+    x: int | None = None
+    y: float | None = None
     label: str = ""
     
     def getCopy(self) -> "Point":
@@ -19,9 +19,9 @@ class Line:
     """
     Holds a linear function (y = ax + b) and calculating functions.
     """
-    a: float = None
-    b: float = None
-    pt: Point = None
+    a: float | None = None
+    b: float | None = None
+    pt: Point | None = None
         
     def __post_init__(self) -> None:
         if self.a is not None and self.pt is not None: self.calcParams()
@@ -57,12 +57,13 @@ class Ensemble():
     sds: np.ndarray = field(default_factory=lambda: np.array([])) 
     label: str = ""
     cnt: int = -1
-    r: Point = None
-    t: Point = None
-    b: Point = None
-    c: Point = None
+    r: Point | None =  None
+    t: Point | None = None
+    b: Point | None= None
+    c: Point | None= None
     bPoints: dict[str, Point] = field(default_factory=lambda: {})
     cPoints: dict[str, Point] = field(default_factory=lambda: {})
+    time: np.timedelta64 | str | None = None
     
     gen_avg = staticmethod(lambda l: np.average(l, axis=0)
                            if len(l) > 0 and l.ndim == 2 else np.array([]))
@@ -71,6 +72,7 @@ class Ensemble():
     
     def __post_init__(self) -> None:
         self.calc()
+        self.convertTime()
     
     def calc(self) -> None:
         self.cnt = len(self.features)
@@ -92,6 +94,10 @@ class Ensemble():
             self.c = cPoints["c_2"].getCopy()
         self.c.label = "c"
     
+    def convertTime(self) -> None:
+        if isinstance(self.time, str):
+            ... # Parse time string and convert to numpy time object
+    
     def clearPoints(self) -> None:
         self.r, self.t, self.b, self.c, self.x = None
         self.bPoints = {}    
@@ -112,7 +118,7 @@ class Ensemble():
         return list(self.cPoints.values())
     
     def getAllPoints(self) -> list[Point]:
-        return self.getBPoints() + self.getCPoints()
+        return self.getBPoints() + self.getCPoints() + [self.r] + [self.t]
             
 class FindPoints():
     def __init__(self) -> None:

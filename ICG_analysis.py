@@ -19,6 +19,16 @@ class ICG():
         return df    
     
     # Filtering/ensembling
+    def subsample(
+            self, features: pd.DataFrame() | np.ndarray, size: int = 5,
+            bootstrap: bool = True
+            ) -> list[Ensemble]:
+        """
+        Create subsample ensembles from the data with or without bootstrapping.
+        """
+        
+        
+    
     def filterByBounds(
             self, features: pd.DataFrame | np.ndarray, boundsMax: float = 1.75,
             boundsMin: float = 0.33, pMin: float = 0.33, idxStart: int = 255,

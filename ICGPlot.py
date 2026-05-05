@@ -22,52 +22,16 @@ class ICGPlot():
         
         # Marker info/properties
         self.markers = {
-            "lozano":       {
-                                "lbl":     "Lozano",
-                                "posRight": False,
-                                "show":     True
-                },
-            "inflection":   {
-                                "lbl":     "Inflect",
-                                "posRight": False,
-                                "show":     True
-                },
-            "d2":           {
-                                "lbl":     r"$d^3$",
-                                "posRight": True,
-                                "show":     True
-                },
-            "d3":           {
-                                "lbl":     r"$d^4$",
-                                "posRight": True,
-                                "show":     True
-                },
-            "c":            {
-                                "lbl":      "C",
-                                "posTop":   True,
-                                "show":     True
-                },
-            "c_1":          {
-                                "lbl":      r"$C_1$",
-                                "posTop":   True,
-                                "show":     True
-                },
-            "c_2":          {
-                                "lbl":      r"$C_2$",
-                                "posRight": False,
-                                "show":     True
-                },
-            "t":            {
-                                "lbl":      "T",
-                                "posTop":   True,
-                                "show":     True
-                },
-            "r":            {
-                                "lbl":      "R",
-                                "posTop":   False,
-                                "show":     True
-                },
-            }
+            "lozano":     {"lbl": "Lozano",     "pos": "left",   "show": True},
+            "inflection": {"lbl": "Inflect",    "pos": "left",   "show": True},
+            "d2":         {"lbl": r"$d^3$",     "pos": "right",  "show": True},
+            "d3":         {"lbl": r"$d^4$",     "pos": "right",  "show": True},
+            "c":          {"lbl": "$C$",        "pos": "top",    "show": True},
+            "c_1":        {"lbl": r"$C_1$",     "pos": "top",    "show": True},
+            "c_2":        {"lbl": r"$C_2$",     "pos": "top",    "show": True},
+            "t":          {"lbl": r"$T$",       "pos": "top",    "show": False},
+            "r":          {"lbl": r"$R$",       "pos": "bottom", "show": True},
+        }
      
     # Plotting functions
     def plotUnderlayFn(
@@ -159,23 +123,10 @@ class ICGPlot():
             zorder = 10
             ax.plot(x, data.sig, color=color, lw=lw, zorder=zorder)
             
-            # Plot B points
-            for pt in data.getBPoints():
+            # Plot points
+            for pt in data.getAllPoints():
                 zorder += 10
-                self.draw_point_horizontal(ax=ax, pt=pt, zorder=zorder)
-            
-            # Plot C points
-            if showC:
-                if showAllC:
-                    for pt in data.getCPoints():
-                        zorder += 10
-                        self.draw_point_vertical(ax=ax, pt=pt, zorder=zorder)
-                else: 
-                    zorder += 10
-                    self.draw_point_vertical(ax=ax, pt=pt.c, zorder=zorder)
-                
-            zorder += 10
-            self.draw_point_vertical(ax=ax, pt=data.r, zorder=zorder)
+                self.draw_point(ax=ax, pt=pt, zorder=zorder)    
             
             ax.set_title(title, fontsize=self.fontsize)
             ax.grid(which="both", axis="both")
@@ -185,11 +136,11 @@ class ICGPlot():
             ax.yaxis.get_offset_text().set_fontsize(self.fontsize)
             ax.set_xlim(x[0], x[-1])
             if yrange is not None: ax.set_ylim(yrange[0], yrange[1])
+            else: ax.set_ylim(self.updateYRange(ax=ax, mult=0.33)) 
             if legend: ax.legend(fontsize=self.fontsize)
             
         return plotFn
             
-    
     def plotFn(
             self, data: Ensemble | list[Ensemble], alpha: float = 0.15, 
             lw: int = 4, colors: list[str] = None, yrange: list[float] = None, 
@@ -291,48 +242,53 @@ class ICGPlot():
             ax.set_ylabel(ylab, fontsize=self.fontsize)
             ax.yaxis.get_offset_text().set_fontsize(self.fontsize)
             ax.set_xlim(x[0], x[-1])
-            
+    
+    # Graph range formatting
+    def updateYRange(self, ax: plt.Axes, mult: float = 0.33) -> list[float]:
+        ticks = ax.get_yticks()
+        spacing = (ticks[1] - ticks[0]) * mult
+        ymin, ymax = ax.get_ylim()
+        
+        return [ymin - spacing, ymax + spacing]        
+    
     # Marker plotting helpers/wrappers
-    def draw_point_vertical(
-            self, ax: plt.Axes, pt: Point, zorder: int, color: str = 'black', 
-            offset_pts: float = 0.0002
+    def draw_point(
+            self, ax: plt.Axes, pt: Point, zorder: int, color: str = 'black',
+            offset_pts: int = 80
             ) -> None:
-        label = self.markers[pt.label]["lbl"]
-        above = self.markers[pt.label]["posTop"]
-        sign = 1 if above else -1
+        marker = self.markers[pt.label]
+        if not marker["show"]:
+            return
+        
+        pos = marker["pos"]
+        offsets = {
+            "top":    (0,           offset_pts // 4),  # shorter for vertical
+            "bottom": (0,          -offset_pts // 4),
+            "right":  (offset_pts,  0),
+            "left":   (-offset_pts, 0),
+        }
+        ha_map = {"top": "center", "bottom": "center", "right": "left",   "left": "right"}
+        va_map = {"top": "bottom", "bottom": "top",    "right": "center", "left": "center"}
+        
+        is_vertical = pos in ("top", "bottom")
+        arrow = "->" if not is_vertical else "-"
+        arrow_alpha = 0.0 if is_vertical else 1.0
+    
+        ax.plot(pt.x, pt.y, 'o', color=color, markersize=15, zorder=zorder)
+    
         ax.annotate(
-            label,
+            marker["lbl"],
             xy=(pt.x, pt.y),
-            xytext=(0, sign * offset_pts),
+            xytext=offsets[pos],
             textcoords='offset points',
-            fontsize=7,
-            fontweight='bold',
-            ha='center',
-            va='center',
+            fontsize=self.fontsize,
+            fontweight='normal',
+            ha=ha_map[pos],
+            va=va_map[pos],
             color=color,
-            arrowprops=dict(arrowstyle='-', color=color, lw=0.8),
-            zorder=zorder
-        )
-
-    def draw_point_horizontal(
-            self, ax: plt.Axes, pt: Point, zorder: int, color: str = 'black', 
-            offset_pts: int = 50
-            ) -> None:
-        label = self.markers[pt.label]["lbl"]
-        right = self.markers[pt.label]["posRight"]
-        sign = 1 if right else -1
-        ha = 'left' if right else 'right'
-        ax.annotate(
-            label,
-            xy=(pt.x, pt.y),
-            xytext=(sign * offset_pts, 0),
-            textcoords='offset points',
-            fontsize=7,
-            ha=ha,
-            va='center',
-            color=color,
-            arrowprops=dict(arrowstyle='->', color=color, lw=0.8),
-            zorder=zorder
+            arrowprops=dict(arrowstyle=arrow, color=color, lw=2,
+                            shrinkA=0, shrinkB=4, alpha=arrow_alpha),
+            zorder=zorder,
         )
             
 plot = ICGPlot()  
