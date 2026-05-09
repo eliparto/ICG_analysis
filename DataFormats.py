@@ -30,8 +30,8 @@ class Line:
         if slope is None: slope = self.a
         if pt is None: pt = self.pt
         self.a = slope
-        x = float(pt.t)
-        y = pt.z
+        x = float(pt.x)
+        y = pt.y
         
         self.b = y - slope * x
         
@@ -42,8 +42,8 @@ class Line:
         return self.a * x + self.b
     
     def calcIntersection(self, line: "Line") -> "Point":
-        x = self.calcX(line.point.y)
-        y = self.calcY(line.point.x)
+        x = self.calcX(line.pt.y)
+        y = self.calcY(line.pt.x)
         return Point(x=x, y=y)
 
 @dataclass
@@ -62,9 +62,11 @@ class Ensemble():
     b: Point | None = None
     c: Point | None = None
     q: Point | None = None
+    bUp: Point | None = None
     qOnset: Point | None = None
     bPoints: dict[str, Point] = field(default_factory=lambda: {})
     cPoints: dict[str, Point] = field(default_factory=lambda: {})
+    allPoints: dict[str, Point] = field(default_factory=lambda: {})
     time: np.timedelta64 | str | None = None
     
     gen_avg = staticmethod(lambda l: np.average(l, axis=0)
@@ -91,17 +93,19 @@ class Ensemble():
         assert 0 <= peak <= 2, f"Invalid peak val {peak} -> 0 <= peak <= 2"
         cPoints = dict(self.cPoints)
         self.c = cPoints["c_1"].getCopy()
-        if peak == 2: self.c = cPoints["c_2"]
-        elif peak == 0 and cPoints["c_2"].y > 1.4*cPoints["c_1"].y:
-            self.c = cPoints["c_2"].getCopy()
-        self.c.label = "c"
+        
+        if len(cPoints) == 2:
+            if peak == 2: self.c = cPoints["c_2"]
+            elif peak == 0 and cPoints["c_2"].y > 1.4*cPoints["c_1"].y:
+                self.c = cPoints["c_2"].getCopy()
+        self.c.label = "c"    
     
     def convertTime(self) -> None:
         if isinstance(self.time, str):
             ... # Parse time string and convert to numpy time object
     
     def clearPoints(self) -> None:
-        self.r, self.t, self.b, self.c, self.x = None
+        self.r =self.t = self.b = self.c = self.x = None
         self.bPoints = {}    
         self.cPoints = {}
         self.xPoints = {}
@@ -121,6 +125,13 @@ class Ensemble():
     
     def getAllPoints(self) -> list[Point]:
         return self.getBPoints() + self.getCPoints() + [self.r] + [self.t]
+    
+    def combinePoints(self) -> dict[str, Point]: # TODO: Dirty implementation -> fix
+        allPoints = self.bPoints.copy()
+        for key, item in self.cPoints.items():
+            allPoints[key] = item
+            
+        self.allPoints = allPoints
             
 class FindPoints():
     def __init__(self) -> None:
@@ -134,11 +145,53 @@ class FindPoints():
         self.findC(signal)
         self.findT(signal)
         # self.findX(signal)
-        self.findB_lozano(signal)
-        self.findB_inflection(signal)
-        self.findB_derivs(signal)
+        self.findBPoints(signal)
     
-    def findB_lozano(self, signal: Ensemble) -> Ensemble:
+    def findBPoints(self, signal) -> None:
+        """
+        Attempt all B-point finding algorithms (some methods aren't always
+        applicable).
+        """
+        funcs = [
+            self.findB_chord, self.findB_derivs, self.findB_inflection,
+            self.findB_lozano, self.findB_zeroCross, self.findB_ratio
+            ]
+        
+        for func in funcs:
+            try: func(signal)
+            except: pass
+    
+    def findB_up(self, signal: Ensemble) -> None:
+        """ 
+        Find the start if the search area for B (where DZDT starts rising).
+        """
+        ...
+    
+    def findB_ratio(self, signal: Ensemble, ratio: float = 0.15) -> None:
+        """
+        Find the point where x% of DZDT_max is placed as the B point.
+        """
+        ...
+    
+    def findB_lozano(self, signal: Ensemble) -> None:
+        """
+        Find the B point per Lozano's implementation of:
+        RB = 1.233*RZ - 0.0032RZ^2 - 31.59 (RZ: r point to zMax (c point))
+        """
+        rz = float (signal.c.x - signal.r.x)
+        rb = 1.233 * rz - 0.0032 * rz**2 - 31.59
+        t = signal.r.x + int(rb)
+        signal.bPoints["lozano"] = Point(x=t, y=signal.sig[t], label="lozano")
+    
+    def findB_zeroCross(self, signal: Ensemble) -> None:
+        """
+        Find the zero-crossing of dzdt as the B point.
+        """
+        tStart = signal.r.x
+        t = np.where(np.diff(np.sign(signal.sig[tStart:])) > 0)[0][0] + tStart
+        signal.bPoints["zero"] = Point(x=t, y=signal.sig[t], label="zero")
+    
+    def findB_chord(self, signal: Ensemble) -> None:
         """
         Find the B-point according to Lozano (max perpendicular dist from cord
         spanning from R-peak projection to C point by looking for the same 
@@ -155,17 +208,17 @@ class FindPoints():
             ptI = line_RC.calcIntersection(line_norm) # Intersection point
             
             return np.sqrt((ptI.x - ptLine.x)**2 + (ptI.y - ptLine.y)**2)
-        
+    
         # Find the points on DZDT with equal slopes to the line RC and dists
         slope = (signal.c.y - signal.r.y) / (signal.c.x - signal.r.x)
         tPts = self.findEqualSlopes(signal.sig, slope, signal.r.x, signal.c.x) 
-        allPts = [Point(x=t, y=signal.sig[t], label="lozano") for t in tPts]
+        allPts = [Point(x=t, y=signal.sig[t], label="chord") for t in tPts]
         
-        if len(tPts) == 1: signal.bPoints["lozano"] = allPts[0]
+        if len(tPts) == 1: signal.bPoints["chord"] = allPts[0]
         else: # > 1 point found -> Take point with largest perpendicular dist
             dists = np.array([calcDist(signal.r, pt, slope) for pt in allPts])
-            signal.bPoints["lozano"] = allPts[np.argmax(dists)]
-    
+            signal.bPoints["chord"] = allPts[np.argmax(dists)]
+
     def findB_derivs(self, signal: Ensemble) -> None:
         """
         Find the B-points corresponding to the peaks of the third and fourth
@@ -201,14 +254,14 @@ class FindPoints():
             )
         
     def findC(
-            self, signal: Ensemble, duration: int = 250
+            self, signal: Ensemble, duration: int = 200
             ) -> None:
         """
         Find the C-point(s) of an ensemble average signal.
         Finds the zero-crossings of the relevant subset of the data.
         """
-        # Find the zero scrossing(s)
-        tStart = signal.r.x + self.dt
+        # Find the zero scrossing(s) -> start scan at point where dzdt > 0
+        tStart = np.where(signal.sig[signal.r.x:] > 0)[0][0] + signal.r.x
         dSig = np.gradient(signal.sig)[tStart:tStart+duration]
         pts = np.where(np.diff(np.sign(dSig)) < 0)[0] + tStart
         signal.cPoints["c_1"] = Point(

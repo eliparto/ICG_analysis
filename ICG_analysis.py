@@ -20,15 +20,19 @@ class ICG():
     
     # Filtering/ensembling
     def subsample(
-            self, features: pd.DataFrame(), size: int = 5,
+            self, features: pd.DataFrame() | Ensemble, size: int = 5,
             bootstrap: bool = True
             ) -> list[Ensemble]:
         """
         Create subsample ensembles from the data with or without bootstrapping.
         TODO: Currently uses the exported ECG ens avg for eg T-point calc.
         """
-        features = self.extractFeatures(df)
-        ecg = self.extractFeatures(df, ecg=True)
+        if isinstance(features, pd.DataFrame):
+            ecg = self.extractFeatures(df, ecg=True)
+            features = self.extractFeatures(df)
+        elif isinstance(features, Ensemble):
+            ecg = features.sigAlt
+            features = features.features
         
         if bootstrap: 
             subFeatures = [
@@ -42,7 +46,9 @@ class ICG():
                 ]
             
         ensembles = [Ensemble(features=f, sigAlt=ecg) for f in subFeatures]
-        #for ens in ensembles: f.findPoints(ens)
+        for ens in ensembles: 
+            f.findPoints(ens)
+            ens.combinePoints()
         
         return ensembles
     
@@ -88,7 +94,7 @@ class ICG():
             features = np.delete(features, idxRem, axis=0)
             
         return [
-            Ensemble(features=features, label="Kept signals", ecg=ecg),
+            Ensemble(features=features, label="Kept signals", sigAlt=ecg),
             Ensemble(features=np.array(rem), label="Removed signals")
             ]
     
@@ -200,6 +206,7 @@ ens = Ensemble(
     sigAlt=icg.extractFeatures(df, ecg=True),
     label="test",
     )
+data = icg.subsample(df)
 slope = 3e-5
 
 f.findPoints(ens)

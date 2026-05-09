@@ -1,5 +1,6 @@
 import numpy as np
 from matplotlib import pyplot as plt
+from matplotlib.ticker import MultipleLocator
 from typing import Callable
 
 from DataFormats import Ensemble, Point
@@ -24,6 +25,8 @@ class ICGPlot():
         self.markers = {
             "lozano":     {"lbl": "Lozano",     "pos": "left",   "show": True},
             "inflection": {"lbl": "Inflect",    "pos": "left",   "show": True},
+            "chord":      {"lbl": "Max dist",   "pos": "left",   "show": True},
+            "zero":       {"lbl": "Zero-cross", "pos": "right",  "show": True},
             "d2":         {"lbl": r"$d^3$",     "pos": "right",  "show": True},
             "d3":         {"lbl": r"$d^4$",     "pos": "right",  "show": True},
             "c":          {"lbl": "$C$",        "pos": "top",    "show": True},
@@ -32,8 +35,47 @@ class ICGPlot():
             "t":          {"lbl": r"$T$",       "pos": "top",    "show": False},
             "r":          {"lbl": r"$R$",       "pos": "bottom", "show": True},
         }
-     
-    # Plotting functions
+    
+    # Point evolution plotting functions
+    def plotPointEvoFn(
+            self, data: list[Ensemble], lw: int = 4, colors: list[str] = None,
+            yrange: list[float] = None, title: str = "", xlab: str = "", 
+            ylab: str = "", legend: bool = True, labels: list[str] = None
+            ) -> Callable[[plt.Axes], None]:
+        """
+        Plot marker points and their evolution over time.
+        """
+        if colors is None: colors = self.colors
+        
+        # Collect points per type over time 
+        if labels is None:
+            labels = ["lozano", "inflection", "d2", "d3", "chord"]
+        pointsData = {label: None for label in labels}
+        for label in labels:
+            pointsData[label] = [
+                d.allPoints[label] for d in data if label in d.allPoints.keys()
+                ]
+        
+        def plot_fn(ax: plt.Axes) -> None:
+            for (pointData, color) in zip(pointsData.items(), colors):
+                label, pts = pointData
+                ptsX = [pt.x for pt in pts]
+                x = np.arange(len(data))
+                ax.plot(x, ptsX, color=color, lw=lw, label=label)
+                
+            ax.set_title(title, fontsize=self.fontsize)
+            ax.grid(which="both", axis="both")
+            ax.tick_params(axis="both", labelsize=self.fontsize)
+            ax.set_xlabel(xlab, fontsize=self.fontsize)
+            ax.set_ylabel(ylab, fontsize=self.fontsize)
+            ax.yaxis.get_offset_text().set_fontsize(self.fontsize)
+            ax.set_xlim(x[0], x[-1])
+            if yrange is not None: ax.set_ylim(yrange[0], yrange[1])
+            if legend: ax.legend(fontsize=self.fontsize)
+            
+        return plot_fn
+        
+    # Signal plotting functions
     def plotUnderlayFn(
             self, data: Ensemble, nSignals: int, alpha: float = 0.15, 
             lwMain: int = 6, lw: int = 4, color: str = "darkblue", 
@@ -107,7 +149,7 @@ class ICGPlot():
     
     def dzdtFn(
             self, data: Ensemble, pointLabels: dict[str, bool] = None,
-            showC: bool = True, showAllC: bool = True, 
+            showC: bool = True, showAllC: bool = True, xtick: int = 100,
             color: str = "dodgerblue", mColor: str = "darkgray", 
             shadeColor: str = "skyblue", lw: int = 4, ptSize: int = 750, 
             shadeRange: list[int] = None, yrange: list[float] = None, 
@@ -126,10 +168,14 @@ class ICGPlot():
             # Plot points
             for pt in data.getAllPoints():
                 zorder += 10
-                self.draw_point(ax=ax, pt=pt, zorder=zorder)    
+                isC = False
+                if pt.x == data.c.x: isC = True
+                self.draw_point(ax=ax, pt=pt, zorder=zorder, isC=isC)    
             
             ax.set_title(title, fontsize=self.fontsize)
             ax.grid(which="both", axis="both")
+            ax.xaxis.set_major_locator(MultipleLocator(xtick))
+            ax.xaxis.set_minor_locator(MultipleLocator(xtick // 2))
             ax.tick_params(axis="both", labelsize=self.fontsize)
             ax.set_xlabel(xlab, fontsize=self.fontsize)
             ax.set_ylabel(ylab, fontsize=self.fontsize)
@@ -215,7 +261,8 @@ class ICGPlot():
     def quickPlot(
             self, data: np.ndarray | list[np.ndarray], vert: bool = False,
             figsize: tuple[int] = None, color: str = "darkblue", lw: int = 4,
-            vline: int = -1, title: str = "", xlab: str = "", ylab: str = ""
+            vline: int = -1, title: str = "", xlab: str = "", ylab: str = "",
+            xtick: int = 100
             ) -> None:
         """
         Quickly plot signal data.
@@ -236,6 +283,8 @@ class ICGPlot():
             if vline > 0:
                 ax.axvline(vline, color="red", lw=lw*2, linestyle=":")
             ax.set_title(title, fontsize=self.fontsize)
+            ax.xaxis.set_major_locator(MultipleLocator(xtick))
+            ax.xaxis.set_minor_locator(MultipleLocator(xtick // 2))
             ax.grid(which="both", axis="both")
             ax.tick_params(axis="both", labelsize=self.fontsize)
             ax.set_xlabel(xlab, fontsize=self.fontsize)
@@ -254,11 +303,13 @@ class ICGPlot():
     # Marker plotting helpers/wrappers
     def draw_point(
             self, ax: plt.Axes, pt: Point, zorder: int, color: str = 'black',
-            offset_pts: int = 80
+            offset_pts: int = 80, isC: bool = False
             ) -> None:
         marker = self.markers[pt.label]
         if not marker["show"]:
             return
+        label = marker["lbl"]
+        if isC: label = r"$\boldsymbol{C}$"
         
         pos = marker["pos"]
         offsets = {
@@ -277,13 +328,13 @@ class ICGPlot():
         ax.plot(pt.x, pt.y, 'o', color=color, markersize=15, zorder=zorder)
     
         ax.annotate(
-            marker["lbl"],
+            label,
             xy=(pt.x, pt.y),
             xytext=offsets[pos],
             textcoords='offset points',
             fontsize=self.fontsize,
             fontstyle="italic",
-            fontweight='normal',
+            fontweight="normal",
             ha=ha_map[pos],
             va=va_map[pos],
             color=color,
